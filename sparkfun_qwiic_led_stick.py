@@ -83,6 +83,7 @@ class QwiicLEDStick(PixelBuf):
 
     def __init__(self, i2c, address=_DEFAULT_ADDRESS, num_pixels=10, brightness=1.0, auto_write=True):
         # Did the user specify an I2C address?
+        self.i2c = i2c
         self.device = I2CDevice(i2c, address)
         self.num_pixels = num_pixels
         super().__init__(
@@ -103,15 +104,7 @@ class QwiicLEDStick(PixelBuf):
             return color.to_bytes(3, "big")
         raise ValueError("color must be an int or (r,g,b) tuple")
 
-    def set_led(self, number, color):
-        """
-        Change the color of a specific LED.
-
-        :param number: the number of LED. Indexing starts at 1.
-        :param color: the color is a (r,g,b) tuple or 0xRRGGBB int.
-        """
-        color = self.color_bytes(color)
-        data = bytes([COMMAND_WRITE_SINGLE_LED_COLOR, number]) + color
+    def _write(self, data):
         with self.device as bus:
             for i in range(RETRIES):
                 try:
@@ -121,6 +114,20 @@ class QwiicLEDStick(PixelBuf):
                     pass
             if i:
                 print(f"Retries: {i}")
+
+    def set_led(self, number, color):
+        """
+        Change the color of a specific LED.
+
+        :param number: the number of LED. Indexing starts at 1.
+        :param color: the color is a (r,g,b) tuple or 0xRRGGBB int.
+        """
+        if number not in range(self.num_pixels):
+            raise ValueError(f"pixel position must be one of 0-{self.num_pixels - 1}")
+
+        color = self.color_bytes(color)
+        data = bytes([COMMAND_WRITE_SINGLE_LED_COLOR, number]) + color
+        self._write(data)
         # return self._i2c.writeBlock(self.address, self.COMMAND_WRITE_SINGLE_LED_COLOR, data)
 
     def optimized_fill(self, color):
@@ -132,71 +139,10 @@ class QwiicLEDStick(PixelBuf):
         color = bytes([int(cc * self.brightness) for cc in self.color_bytes(color)])
         data = bytes([COMMAND_WRITE_ALL_LED_COLOR]) + color
         print(data)
-        with self.device as bus:
-            bus.write(data)
+        self._write(data)
         # return self._i2c.writeBlock(self.address, self.COMMAND_WRITE_ALL_LED_COLOR, data_list)
 
-    def set_all_LED_unique_color(self, colors):
-        """
-            Change the color of all LEDs at once to individual values.
-
-            :param red_list: a list of red values for the LEDs. Index 0 of red_list 
-                corresponds to the red value of LED 0.
-            :param blue_list: a list of blue values for the LEDs.
-            :param green_list: a list of green  values for the LEDs.
-            :param length: the length of the LED string.
-            :return: True if commands are written successfully, false otherwise
-            :rtype: bool
-        """
-        # First, check the boundary cases
-        for i in range(0, length):
-            if red_list[i] > 255:
-                red_list[i] = 255
-            if red_list[i] < 0:
-                red_list[i] = 0
-            if green_list[i] > 255:
-                green_list[i] = 255
-            if green_list[i] < 0:
-                green_list[i] = 0
-            if blue_list[i] > 255:
-                blue_list[i] = 255
-            if blue_list[i] < 0:
-                blue_list[i] = 0
-
-        # ATtiny has a 16 byte limit on an I2C transmission, so we need to chop up 
-        # our color lists into chunks of 12 values
-        # Use list comprehension to break list into a list of lists of length 12
-        n = 12
-        red_2dim_list = [red_list[i * n:(i + 1) * n] for i in range((len(red_list) + n - 1) // n)]
-        green_2dim_list = [green_list[i * n:(i +1) * n] for i in range((len(green_list) + n - 1) // n)]
-        blue_2dim_list = [blue_list[i * n:(i + 1) * n] for i in range((len(blue_list) + n - 1) // n)]
-        
-        # Send out red values
-        for i in range(0, len(red_2dim_list)):
-            transmission_len = len(red_2dim_list[i])    # Calculate the number of red values to send
-            offset = i * n                              # Calculate LED offset
-            data_list = [transmission_len, offset] + red_2dim_list[i]
-            self._i2c.writeBlock(self.address, self.COMMAND_WRITE_RED_ARRAY, data_list)
-        
-        # Send out green values
-        for i in range(0, len(green_2dim_list)):
-            transmission_len = len(green_2dim_list[i])
-            offset = i * n
-            data_list = [transmission_len, offset] + green_2dim_list[i]
-            self._i2c.writeBlock(self.address, self.COMMAND_WRITE_GREEN_ARRAY, data_list)
-
-        # Send out blue values
-        for i in range(0, len(blue_2dim_list)):
-            transmission_len = len(blue_2dim_list[i])
-            offset = i * n
-            data_list = [transmission_len, offset] + blue_2dim_list[i]
-            self._i2c.writeBlock(self.address, self.COMMAND_WRITE_BLUE_ARRAY, data_list)
-    
-    # -----------------------------------------------------------------------------
-    # set_single_LED_brightness(number, brightness)
-    #
-    # Change the brightness of a specific LED while keeping their current color
-    def set_single_LED_brightness(self, number, brightness):
+    def set_led_brightness(self, number, brightness):
         """
             Change the brightness of a specific LED while keeping their current color.
             To turn LEDs off but remember their previous color, set brightness to 0.
@@ -206,20 +152,16 @@ class QwiicLEDStick(PixelBuf):
             :return: true if the command was sent successfully, false otherwise.
             :rtype: bool
         """
-        # First, check the boundary cases
-        if brightness > 31:
-            brightness = 31
-        if brightness < 0:
-            brightness = 0
-        
-        data = [number, brightness]
-        return self._i2c.writeBlock(self.address, self.COMMAND_WRITE_SINGLE_LED_BRIGHTNESS, data)
-    
-    # ----------------------------------------------------------------------------
-    # set_all_LED_brightness(brightness)
-    #
-    # Change the brightness of all LEDs while keeping their current color
-    def set_all_LED_brightness(self, brightness):
+        if number not in range(self.num_pixels):
+            raise ValueError(f"pixel position must be one of 0-{self.num_pixels - 1}")
+        if brightness < 0 or brightness > 31:
+            raise ValueError("brightness is a number between 0 and 31")
+
+        data = bytes([COMMAND_WRITE_SINGLE_LED_BRIGHTNESS, number, brightness])
+        self._write(data)
+        # return self._i2c.writeBlock(self.address, self.COMMAND_WRITE_SINGLE_LED_BRIGHTNESS, data)
+
+    def set_brightness(self, brightness):
         """
             Change the brightness of all LEDs while keeping their current color.
             To turn all LEDs off but remember their previous color, set brightness to 0
@@ -228,31 +170,26 @@ class QwiicLEDStick(PixelBuf):
             :return: true if the command was sent successfully, false otherwise.
             :rtype: bool
         """
-        # First, check the boundary cases
-        if brightness > 31:
-            brightness = 31
-        if brightness < 0:
-            brightness = 0
-        
-        return self._i2c.writeByte(self.address, self.COMMAND_WRITE_ALL_LED_BRIGHTNESS, brightness)
-    
-    # ---------------------------------------------------------------------------
-    # led_off()
-    #
-    # Turn all LEDs off by setting color to 0
-    def LED_off(self):
+        if number not in range(self.num_pixels):
+            raise ValueError("pixel position must be one of 0-8")
+        if brightness < 0 or brightness > 31:
+            raise ValueError("brightness is a number between 0 and 31")
+
+        data = bytes([COMMAND_WRITE_ALL_LED_BRIGHTNESS, brightness])
+        self._write(data)
+        # return self._i2c.writeByte(self.address, self.COMMAND_WRITE_ALL_LED_BRIGHTNESS, brightness)
+
+    def off(self):
         """ 
             Turn all LEDs off by setting color to 0
 
             :return: true if the command was sent successfully, false otherwise.
             :rtype: bool
         """
-        return self._i2c.writeByte(self.address, self.COMMAND_WRITE_ALL_LED_OFF, 0)
-    
-    # ---------------------------------------------------------------------------
-    # change_address(new_address)
-    #
-    # Change the I2C address from one address to another
+        data = bytes([COMMAND_WRITE_ALL_LED_OFF, 0])
+        self._write(data)
+        # return self._i2c.writeByte(self.address, self.COMMAND_WRITE_ALL_LED_OFF, 0)
+
     def change_address(self, new_address):
         """
             Change the I2C address from one address to another.
@@ -264,24 +201,8 @@ class QwiicLEDStick(PixelBuf):
         # First, check if the specified address is valid
         if new_address < 0x08 or new_address > 0x77:
             return False
-        
-        self._i2c.writeByte(self.address, self.COMMAND_CHANGE_ADDRESS, new_address)
-        
-        # Update address variable
-        self.address = new_address
 
-    # --------------------------------------------------------------------------
-    # change_length(new_length)
-    #
-    # Change the length of the LED string
-    def change_length(self, new_length):
-        """
-            Change the length of the LED string
-            
-            :param new_length: the new length of the LED string
-            :return: true if the command was sent successfully, false otherwise.
-            :rtype: bool
-        """
-        # TODO: need to figure out the max length of the LED string
-        return self._i2c.writeByte(self.address, self.COMMAND_CHANGE_LED_LENGTH, new_length)
-        
+        data = bytes([COMMAND_CHANGE_ADDRESS, new_address])
+        self._write(data)
+        self.device = I2CDevice(self.i2c, new_address)
+        # self._i2c.writeByte(self.address, self.COMMAND_CHANGE_ADDRESS, new_address)
