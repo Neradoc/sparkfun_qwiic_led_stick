@@ -1,3 +1,4 @@
+# based on Sparkfun's python library
 #-----------------------------------------------------------------------------
 # qwiic_led_stick.py
 #
@@ -9,7 +10,7 @@
 # Written by Priyanka Makin @ SparkFun Electronics, June 2021
 # 
 # This python library supports the SparkFun Electroncis qwiic 
-# qwiic sensor/board ecosystem 
+# qwiic sensor/board ecosystem
 #
 # More information on qwiic is at https:// www.sparkfun.com/qwiic
 #
@@ -86,6 +87,7 @@ class QwiicLEDStick(PixelBuf):
         self.i2c = i2c
         self.device = I2CDevice(i2c, address)
         self.num_pixels = num_pixels
+        self.retries = 0
         super().__init__(
             num_pixels, byteorder="RGB", brightness=brightness, auto_write=auto_write
         )
@@ -95,6 +97,17 @@ class QwiicLEDStick(PixelBuf):
         for pos in range(self.num_pixels):
             self.set_led(pos, buffer[3 * pos:3 * (pos + 1)])
 
+    def _write(self, data):
+        """Write data with retries"""
+        with self.device as bus:
+            for i in range(RETRIES):
+                try:
+                    bus.write(data)
+                    break
+                except OSError:
+                    time.sleep(0.001)
+                    self.retries += 1
+
     @staticmethod
     def color_bytes(color):
         """Convert multiple color formats into 3 bytes"""
@@ -103,17 +116,6 @@ class QwiicLEDStick(PixelBuf):
         elif isinstance(color, int):
             return color.to_bytes(3, "big")
         raise ValueError("color must be an int or (r,g,b) tuple")
-
-    def _write(self, data):
-        with self.device as bus:
-            for i in range(RETRIES):
-                try:
-                    bus.write(data)
-                    break
-                except OSError:
-                    pass
-            if i:
-                print(f"Retries: {i}")
 
     def set_led(self, number, color):
         """
@@ -138,7 +140,6 @@ class QwiicLEDStick(PixelBuf):
         """
         color = bytes([int(cc * self.brightness) for cc in self.color_bytes(color)])
         data = bytes([COMMAND_WRITE_ALL_LED_COLOR]) + color
-        print(data)
         self._write(data)
         # return self._i2c.writeBlock(self.address, self.COMMAND_WRITE_ALL_LED_COLOR, data_list)
 
