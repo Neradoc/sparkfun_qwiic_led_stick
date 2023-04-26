@@ -25,9 +25,8 @@ pixels.optimized_fill(0)
 #     time.sleep(1)
 
 while True:
-    for n in range(0,256,4):
+    for n in range(0,256,8):
         for i in range(10):
             pixels[i] = colorwheel(n + 4 * i)
         pixels.show()
-        time.sleep(0.1)
-    print(pixels.retries)
+        time.sleep(0.05)
